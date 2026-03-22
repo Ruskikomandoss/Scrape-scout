@@ -47,6 +47,11 @@ Fields present on the page get a validated selector. Fields absent get `found: f
 pip install -r requirements.txt
 ```
 
+If you plan to use JS rendering, also install the Chromium browser:
+```bash
+playwright install chromium
+```
+
 Copy `.env` and fill in the keys for the providers you want to use:
 
 ```
@@ -150,14 +155,31 @@ scout/
 │   ├── validator.py    # Stage 5 — selector validation against source HTML
 │   ├── output.py       # Stage 6 — JSON config + BS4 snippet generation
 │   ├── fields.py       # 35-field extraction catalog
+│   ├── fetcher.py      # URL fetching — static (requests) and JS-rendered (Playwright)
 │   └── storage.py      # SQLite persistence (runs.db)
 ├── requirements.txt
 └── .env
 ```
 
+## JS rendering
+
+For pages built with React, Vue, Angular, Next.js (CSR), or any framework that populates the DOM via JavaScript, plain HTTP fetching returns near-empty HTML. Enable **Use JS rendering** in the Input tab to use a headless Chromium browser instead.
+
+**Prerequisite** (one-time):
+```bash
+playwright install chromium
+```
+
+**Wait until** controls when Playwright captures the DOM after navigation:
+
+| Option | When to use |
+|---|---|
+| `networkidle` | Best for SPAs — waits until no network requests for 500 ms. Slowest but most complete. |
+| `load` | `window.load` fired — most resources finished. Good middle ground. |
+| `domcontentloaded` | DOM parsed, scripts may still be running. Fastest, may miss lazy-loaded content. |
+
 ## Notes
 
-- v1 is static HTML only — no JavaScript rendering (no Playwright/Selenium)
 - HuggingFace models are downloaded on first run (~1.5 GB total) and cached locally
 - All pipeline stages have independent error handling — a failure in one stage does not abort the run
 - `runs.db` is created automatically in the project root on first run

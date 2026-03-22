@@ -15,7 +15,6 @@ import tempfile
 import os
 from typing import Tuple
 
-import requests as http_requests
 import gradio as gr
 
 from scout.parser import parse
@@ -25,26 +24,12 @@ import scout.reasoner as _reasoner_module
 from scout.validator import validate
 from scout.output import build_output
 from scout.storage import init_db, save_run, list_runs, get_run, delete_run
+from scout.fetcher import fetch_static, fetch_rendered
 
 init_db()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helper: fetch URL
-# ---------------------------------------------------------------------------
-
-def fetch_url(url: str) -> str:
-    """Fetch *url* and return the response text.  Raises on HTTP error."""
-    response = http_requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (Scout/1.0)"},
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.text
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +43,8 @@ def run_scout(
     model_key: str = DEFAULT_MODEL,
     ollama_model: str = "llama3.2",
     ollama_url: str = "http://localhost:11434/v1",
+    use_js_render: bool = False,
+    wait_until: str = "networkidle",
 ) -> Tuple[dict | None, str, str, str]:
     """
     Run the full Scout pipeline.
@@ -78,7 +65,10 @@ def run_scout(
     # ------------------------------------------------------------------
     if source_url:
         try:
-            html_source = fetch_url(source_url)
+            if use_js_render:
+                html_source = fetch_rendered(source_url, wait_until=wait_until)
+            else:
+                html_source = fetch_static(source_url)
         except Exception as exc:
             errors.append(f"[URL fetch] {exc}")
             # Fall through with whatever HTML was pasted, if any
@@ -258,6 +248,19 @@ with gr.Blocks(title="Scout — Scraper Selector Generator") as demo:
                     label="Ollama base URL",
                     value="http://localhost:11434/v1",
                 )
+            with gr.Row():
+                js_render_checkbox = gr.Checkbox(
+                    label="Use JS rendering (Playwright)",
+                    value=False,
+                    info="Enable for React/Vue/Angular/Next.js CSR pages. Requires: playwright install chromium",
+                )
+                wait_until_dropdown = gr.Dropdown(
+                    label="Wait until",
+                    choices=["networkidle", "load", "domcontentloaded"],
+                    value="networkidle",
+                    visible=False,
+                    info="networkidle: best for SPAs | load: middle ground | domcontentloaded: fastest",
+                )
             run_button = gr.Button("Run Scout", variant="primary")
 
         # ------------------------------------------------------------------
@@ -346,18 +349,27 @@ with gr.Blocks(title="Scout — Scraper Selector Generator") as demo:
         outputs=[ollama_group],
     )
 
+    def _toggle_wait_until(use_js: bool):
+        return gr.update(visible=use_js)
+
+    js_render_checkbox.change(
+        fn=_toggle_wait_until,
+        inputs=[js_render_checkbox],
+        outputs=[wait_until_dropdown],
+    )
+
     # ------------------------------------------------------------------
     # Wire up Run Scout button
     # ------------------------------------------------------------------
-    def _run(html: str, url: str, hint: str, model_key: str, ollama_model: str, ollama_url: str):
+    def _run(html: str, url: str, hint: str, model_key: str, ollama_model: str, ollama_url: str, use_js: bool, wait: str):
         config_dict, snippet, reasoning, errors = run_scout(
-            html, url, hint, model_key, ollama_model, ollama_url
+            html, url, hint, model_key, ollama_model, ollama_url, use_js, wait
         )
         return config_dict, snippet, reasoning, errors, config_dict, snippet
 
     run_button.click(
         fn=_run,
-        inputs=[html_input, url_input, hint_input, model_dropdown, ollama_model_input, ollama_url_input],
+        inputs=[html_input, url_input, hint_input, model_dropdown, ollama_model_input, ollama_url_input, js_render_checkbox, wait_until_dropdown],
         outputs=[
             config_output,
             snippet_output,
@@ -383,18 +395,20 @@ with gr.Blocks(title="Scout — Scraper Selector Generator") as demo:
     )
 
     # Optionally populate HTML box when URL is entered (on blur / change)
-    def _fetch_html_preview(url: str) -> str:
+    def _fetch_html_preview(url: str, use_js: bool, wait: str) -> str:
         """Fetch HTML from URL and return it so the HTML box is pre-populated."""
         if not url or not url.strip():
             return ""
         try:
-            return fetch_url(url.strip())
+            if use_js:
+                return fetch_rendered(url.strip(), wait_until=wait)
+            return fetch_static(url.strip())
         except Exception as exc:
             return f"<!-- Error fetching URL: {exc} -->"
 
     url_input.blur(
         fn=_fetch_html_preview,
-        inputs=[url_input],
+        inputs=[url_input, js_render_checkbox, wait_until_dropdown],
         outputs=[html_input],
     )
 
