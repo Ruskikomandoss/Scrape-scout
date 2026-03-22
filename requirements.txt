@@ -1,0 +1,11 @@
+gradio
+beautifulsoup4
+lxml
+requests
+transformers
+torch
+huggingface_hub
+anthropic
+openai
+google-generativeai
+python-dotenv
